@@ -1,0 +1,16 @@
+{
+	"name": "JiraAPIDev",
+        "image": "mcr.microsoft.com/devcontainers/rust:trixie",
+	"features": {
+		"ghcr.io/devcontainers/features/node:1": {
+			"version": "lts"
+		},
+		"ghcr.io/devcontainers/features/github-cli:1": {
+			"installDirectlyFromGitHubRelease": true,
+			"version": "latest"
+		},
+		"ghcr.io/devcontainers-extra/features/claude-code:1": {
+			"version": "latest"
+		}
+	}
+}

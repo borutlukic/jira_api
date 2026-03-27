@@ -4,9 +4,8 @@ use std::collections::HashSet;
 use std::io::Read;
 use std::path::PathBuf;
 
-// https://dac-static.atlassian.com/server/jira/platform/jira_software_dc_11003_swagger.v3.json
 const JIRA_OPENAPI: &str = "openapi/jira_software_dc_11003_swagger.v3.json";
-const DEBUG_OUTPUT: bool = true;
+const JIRA_OPENAPI_URL: &str = "https://dac-static.atlassian.com/server/jira/platform/jira_software_dc_11003_swagger.v3.json";
 
 fn rename_in_schema_type(schema_type: &mut openapi_to_rust::analysis::SchemaType, original_name: &str, new_name: &str) {
     use openapi_to_rust::analysis::SchemaType;
@@ -50,7 +49,7 @@ fn rename_in_schema_type(schema_type: &mut openapi_to_rust::analysis::SchemaType
 }
 
 fn rename_schema(analysis: &mut SchemaAnalysis, original_name: String, new_name: String) {
-    if DEBUG_OUTPUT { println!("cargo:warning=renaming api schema {original_name} to {new_name}"); }
+    println!("renaming api schema {original_name} to {new_name}");
     if let Some(mut schema) = analysis.schemas.remove(&original_name) {
         schema.name = new_name.clone();
         analysis.schemas.insert(new_name.clone(), schema);
@@ -85,7 +84,6 @@ fn rename_schema(analysis: &mut SchemaAnalysis, original_name: String, new_name:
 
 fn dedup_properties(analysis: &mut SchemaAnalysis) {
     use openapi_to_rust::analysis::SchemaType;
-    use std::collections::HashSet;
     for (_, schema) in analysis.schemas.iter_mut() {
         if let SchemaType::Object { properties, .. } = &mut schema.schema_type {
             let mut seen: HashSet<String> = HashSet::new();
@@ -100,7 +98,7 @@ fn dedup_properties(analysis: &mut SchemaAnalysis) {
                 })
                 .collect();
             for key in keys_to_remove {
-                if DEBUG_OUTPUT { println!("cargo:warning=removed duplicate property {} from schema {}", key, schema.name); }
+                println!("removed duplicate property {} from schema {}", key, schema.name);
                 properties.remove(&key);
             }
         }
@@ -110,7 +108,6 @@ fn dedup_properties(analysis: &mut SchemaAnalysis) {
 fn fix_parameters(analysis: &mut SchemaAnalysis) {
     for (_, operation) in analysis.operations.iter_mut() {
         let path = &operation.path;
-        // Collect all {param} names from the path template
         let path_params: std::collections::HashSet<String> = path
             .split('{')
             .skip(1)
@@ -120,7 +117,7 @@ fn fix_parameters(analysis: &mut SchemaAnalysis) {
 
         operation.parameters.retain(|p| {
             if p.location == "path" && !path_params.contains(&p.name.to_lowercase()) {
-                if DEBUG_OUTPUT { println!("cargo:warning=removed parameter {} from api call {path}", p.name); }
+                println!("removed parameter {} from api call {path}", p.name);
                 false
             } else {
                 true
@@ -134,17 +131,15 @@ fn rename_body_schema_type(analysis: &mut SchemaAnalysis, from_type: &str, to_ty
     for (_, operation) in analysis.operations.iter_mut() {
         if let Some(RequestBodyContent::Json { schema_name }) = &mut operation.request_body {
             if schema_name == from_type {
-                if DEBUG_OUTPUT { println!("cargo:warning=renamed request body schema {} -> {} in api call {}", from_type, to_type, operation.path); }
+                println!("renamed request body schema {} -> {} in api call {}", from_type, to_type, operation.path);
                 *schema_name = to_type.to_string();
             }
         }
     }
 }
 
-/// Injects a synthetic array-of-T schema into the analysis so the generator can
-/// produce `type <name> = Vec<<item_schema>>;` and use it as a return type.
 fn inject_array_schema(analysis: &mut SchemaAnalysis, name: &str, item_schema: &str) {
-    println!("cargo:warning=injecting array schema {} = Vec<{}>", name, item_schema);
+    println!("injecting array schema {} = Vec<{}>", name, item_schema);
     let mut deps = HashSet::new();
     deps.insert(item_schema.to_string());
     let schema = AnalyzedSchema {
@@ -164,21 +159,18 @@ fn inject_array_schema(analysis: &mut SchemaAnalysis, name: &str, item_schema: &
     analysis.dependencies.add_dependency(name.to_string(), item_schema.to_string());
 }
 
-/// Replaces the 200 response schema of all operations matching a given path and HTTP method.
 fn fix_response_schema_type(analysis: &mut SchemaAnalysis, path: &str, method: &str, new_schema: &str) {
     let method_upper = method.to_uppercase();
     for (_, op) in analysis.operations.iter_mut() {
         if op.path == path && op.method == method_upper {
             let old = op.response_schemas.insert("200".to_string(), new_schema.to_string());
             println!(
-                "cargo:warning=fixed response schema for {} {} from {:?} to {}",
+                "fixed response schema for {} {} from {:?} to {}",
                 method_upper, path, old, new_schema
             );
         }
     }
 }
-
-const JIRA_OPENAPI_URL: &str = "https://dac-static.atlassian.com/server/jira/platform/jira_software_dc_11003_swagger.v3.json";
 
 fn download_spec_if_missing() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::Path::new(JIRA_OPENAPI);
@@ -188,19 +180,16 @@ fn download_spec_if_missing() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    println!("cargo:warning=Downloading Jira OpenAPI spec from {}", JIRA_OPENAPI_URL);
+    println!("Downloading Jira OpenAPI spec from {}", JIRA_OPENAPI_URL);
     let response = ureq::get(JIRA_OPENAPI_URL).call()?;
     let mut body = String::new();
     response.into_reader().read_to_string(&mut body)?;
     std::fs::write(path, body)?;
-    println!("cargo:warning=Saved Jira OpenAPI spec to {}", JIRA_OPENAPI);
+    println!("Saved Jira OpenAPI spec to {}", JIRA_OPENAPI);
     Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("cargo:rerun-if-changed={}", JIRA_OPENAPI);
-    println!("cargo:rerun-if-changed=build.rs");
-
     download_spec_if_missing()?;
 
     let spec_content = std::fs::read_to_string(JIRA_OPENAPI)?;
@@ -209,9 +198,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut analyzer = SchemaAnalyzer::new(spec_value)?;
     let mut analysis = analyzer.analyze()?;
 
-    // Atlassian has created a struct called Option which interfers with rust's std::Option so we rename it
+    // Atlassian has created a struct called Option which interferes with rust's std::Option so we rename it
     rename_schema(&mut analysis, "Option".to_string(), "OptionBasic".to_string());
-    
+
     // Atlassian's OpenAPI is broken and some structs repeat items of the same name
     dedup_properties(&mut analysis);
 
@@ -240,5 +229,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = generator.generate_all(&mut analysis)?;
     generator.write_files(&result)?;
 
+    println!("Generated code written to src/generated/");
     Ok(())
 }
